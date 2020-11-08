@@ -2,8 +2,8 @@
 
 pip -r requirements.txt
 
-cd keras-retinanet
-python setup.py install
-python setup.py build_ext --inplace
+cd keras-retinanet <br>
+python setup.py install <br>
+python setup.py build_ext --inplace <br>
 
 python Inference_model.py
