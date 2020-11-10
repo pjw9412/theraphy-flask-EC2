@@ -1,6 +1,5 @@
 # theraphy-flask-EC2
 
-파이썬 3.6 가상환경을 만들고..<br>
 pip -r requirements.txt
 
 cd keras-retinanet <br>
