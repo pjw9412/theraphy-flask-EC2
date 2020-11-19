@@ -15,20 +15,21 @@ from keras_retinanet.utils.image import read_image_bgr, preprocess_image, resize
 from keras_retinanet.models import backbone, load_model
 
 app = flask.Flask(__name__)
-predictList = ['window', 'house', 'door', 'roof', 'triangle roof', 'fense', 'smoking chimney', 'ground line', 'achromatic sun', 'side door','veiled window', 'poor wall' 'solid wall', 'half sun', 'patterned roof', 'broken house']
+predictList=['window', 'door', 'house','tree', 'triangle roof', 'roof', 'veiled window', 'mountain','smoking chimney', 'fense', 'ground line', 'patterned roof', 'side door house','poor wall', 'half sun', 'solid wall', '2nd floor window house']
 
 model = None
 graph = None
 before_halfwidth = None
 before_halfheight = None
 beforeArea = None
+roof = ""
 
 
 def load_models():
     # https://github.com/keras-team/keras/issues/2397
     global model
     custom_objects = backbone('resnet50').custom_objects
-    model = keras.models.load_model('house3_inference.h5', custom_objects=custom_objects)
+    model = keras.models.load_model('house3-1.h5', custom_objects=custom_objects)
     model._make_predict_function()
     global graph
     graph = tf.compat.v1.get_default_graph()  # tf.get_default_graph()의 최신 버전
@@ -49,7 +50,6 @@ def predict():
             if extention != 'JPEG' and extention != 'PNG':
                 return flask.jsonify(data)
             else:
-                print("JPG or PNG")
                 # https://stackoverflow.com/questions/47515243/reading-image-file-file-storage-object-using-cv2
                 # convert string data to numpy array
                 npimg = numpy.fromstring(postImage, numpy.uint8)
@@ -60,21 +60,15 @@ def predict():
             if image is False:
                 return flask.jsonify(data)
 
-            print('---------------')
-            print('LABELLIST =', labelList)
-            print('SCORELIST =', scoreList)
-            print('x1 =', x1)
-            print('y1 =', y1)
-            print("x2 =", x2)
-            print("y2 =", y2)
-
             # preds = numpy.argmax(model(image).numpy())
             # clear_session()
             image = None
             postImage = None
+            hList=[]
 
             data['label'] = labelList   # getHouse에서 labeList 중 house를 삭제하기 때문에 getHouse위에 위치해야 함.
-            data['house'] = getHouse(labelList,x1,y1,x2,y2)
+            data['house'] = getHouse(labelList,scoreList,x1,y1,x2,y2)
+            # data['house'] = hList.append(4)
             data['score'] = scoreList
             data['x1'] = x1        # int32 JSON으로 변환할 수 없으니 일반 int 형태로 변환
             data['y1'] = y1
@@ -94,6 +88,10 @@ def prepare_image(image, target):
         y2 = []
         scoreList = []
         labelList = []
+        roofScore = 0
+        houseScore = 0
+        global roof
+
 
         height, width, channels = image.shape
         global beforeArea
@@ -128,6 +126,24 @@ def prepare_image(image, target):
             # float32 -> float64로 변환. float32는 JSON 변환이 안 되는데 float64는 JSON 변환이 된다.
             score = score.astype(float)
 
+            # 루프 3종인 경우,
+            if predictList[label] == 'roof' or predictList[label] == 'patterned roof' or predictList[label] ==   'triangle roof':
+                if roofScore < score :
+                    roofScore = score
+                    roof = predictList[label]
+                else:
+                    # continue를 함으로써 append하지 않음.
+                    print("CONTINUE -> ", predictList[label] , " 삭제!!")
+                    continue
+
+            # 집 2종인 경우
+            if predictList[label] == 'house' or predictList[label] == 'side door house':
+                if houseScore < score :
+                    houseScore = score
+                else:
+                    print("CONTINUE -> ", predictList[label], " 삭제!!")
+                    continue
+
             # List에 저장
             labelList.append(predictList[label])
             scoreList.append((score))
@@ -137,24 +153,44 @@ def prepare_image(image, target):
             x2.append(int(box[2]))
             y2.append(int(box[3]))
 
+
+        print('---------------')
+        print('LABELLIST =', labelList)
+        print('SCORELIST =', scoreList)
+        print('x1 =', x1)
+        print('y1 =', y1)
+        print("x2 =", x2)
+        print("y2 =", y2)
+
         return (image, labelList, scoreList, x1, y1, x2, y2)
 
-def getHouse(labelList,x1,y1,x2,y2):
+def getHouse(labelList,scoreList,x1,y1,x2,y2):
     houseList = []
     append = houseList.append # 파이썬에서는 .을 쓰면 속도가 느려지는 현상이 있다고한다. 반복문에서만큼은 . 사용을 자제하기 위함.
     doorExist = False
     fenseAlreadyFound = False
     chimneyAlreadyFound = False
+    veiledWindowAlreadyFound = False
+    treeOrMountainAlrearFound = False
     countWindows = 0
-    idx = labelList.index('house')
+    global roof
+
+    # https://stackoverflow.com/questions/8197323/list-index-function-for-python-that-doesnt-throw-exception-when-nothing-found
+    # labelList에 house가 존재하면 idx를 house로 초기화. house가 없으면 sdh로 초기화.
+    try:
+        idx = labelList.index('house') if 'house' in labelList else labelList.index('side door house')
+    except:
+        print("그림에 집이 없습니다.")
 
     # 집. 집을 먼저 찾아야 현관문, 지붕의 비율을 계산할수가 있다.
-    print('house founded')
     houseArea = (x2[idx]-x1[idx]) * (y2[idx]-y1[idx])
-
     # house 비율 = house/그림 크기
     houseRatio = getRatio(houseArea, beforeArea)
     print('HOUSE RATIO = ', houseRatio)
+
+    if labelList[idx] == 'side door house':
+        print("측면의 현관문")
+        append(20)
 
     # 444 지나치게 큰 집(3/4)
     if houseRatio >= 0.75:
@@ -181,37 +217,44 @@ def getHouse(labelList,x1,y1,x2,y2):
         print(y1[idx], ' > ', before_halfheight)
         append(9)
 
-    # labelList.remove('house')
     for i in range(len(labelList)):
         if labelList[i] =='house':
             continue
         # 창문과 같이 labelList에 여러개가 섞여 있을 확률이 높은 개체의 조건문을 위쪽에 배치하여 성능 최적화.
         # 창문
-        if labelList[i] =='window':
+        if labelList[i] =='window' or labelList[i] == 'veiled window':
             print("window found")
             countWindows += 1
+            if  veiledWindowAlreadyFound == False and labelList[i] =='veiled window':
+                print("커튼, 창살 등으로 가려진 창문")
+                append(25)
+                veiledWindowAlreadyFound = True
             continue
-        #울타리
-        # 313131 울타리의 표현
-        if (fenseAlreadyFound == False) & (labelList[i] =='fense'):
-            print("fense found")
+        # 기타
+        if fenseAlreadyFound == False and labelList[i] =='fense':
+            print("울타리의 표현, 울타리처럼 지면이 표현")
             append(31)
             fenseAlreadyFound = True
             continue
+
+        if treeOrMountainAlrearFound == False and (labelList[i] == 'mountain' or labelList[i] == 'tree'):
+            print("산속이나 숲속의 집의 표현")
+            append(30)
+            treeOrMountainAlrearFound = True
+            continue
+
         # 굴뚝
-        # 272727 굴뚝의 연기
-        if (chimneyAlreadyFound == False) & (labelList[i] =='smoking chimney'):
-            print("smoking chimney found")
+        if chimneyAlreadyFound == False and labelList[i] =='smoking chimney':
+            print("굴뚝의 연기")
             append(27)
             chimneyAlreadyFound = True
             continue
         # 현관문
         if labelList[i] =='door':
             doorExist = True
-            print("door found")
             doorArea = (x2[i]-x1[i]) * (y2[i]-y1[i])
             doorRatio = getRatio(doorArea, houseArea)  # door 비율 = door Area / house Area
-            print(' door RATIO = ', doorRatio)
+            print('door RATIO = ', doorRatio)
 
             # 181818 현관문이 과하게 클 경우 3/4
             if doorRatio >= 0.75:
@@ -223,8 +266,7 @@ def getHouse(labelList,x1,y1,x2,y2):
                 append(19)
             continue
         # 지붕
-        if labelList[i] =='roof':
-            print("roof found")
+        if labelList[i] == roof:
             roofArea = (x2[i]-x1[i]) * (y2[i]-y1[i])
             roofRatio = getRatio(roofArea, houseArea) # roof 비율 = roof Area/house Area
             print('roof RATIO = ', roofRatio)
@@ -232,8 +274,28 @@ def getHouse(labelList,x1,y1,x2,y2):
             # 131313 과도하게 큰 지붕 3/4
             if roofRatio >= 0.75:
                 print('과도하게 큰 지붕')
+                append(12)
+            
+            if roof == 'patterned roof':
+                print('과도한 지붕의 무늬 표현')
                 append(13)
+            elif roof == 'triangle roof':
+                print("뾰족한 지붕의 표현, 세모 지붕")
+                append(14)
             continue
+        # 태양
+        if labelList[i] == 'half sun':
+            print("반만 나온 태양")
+            append(28)
+            continue
+        
+        # 벽
+        if labelList[i] == 'poor wall':
+            print("허술한 벽")
+            append(16)
+        if labelList[i] == 'solid wall':
+            print("지나치게 견고한 벽돌이나 벽면의 표현")
+            append(17)
 
     # 222222 현관문의 생략
     if doorExist == False:
@@ -262,8 +324,8 @@ if __name__ == "__main__":
     print(("* Loading Keras model and Flask starting server..." "please wait until server has fully started"))
     print("START")
 
-    # change the host and port as 0.0.0.0. / 8080 when we need to deploy our app to AWS
+    # change the host and port as 0.0.0.0. / 5000 when we need to deploy our app to AWS
     # defaualt(local) is 127.0.0.1 / 5000
     load_models()
     app.run(debug=True)
-    # app.run(host='0.0.0.0', port=8080)
+    # app.run(host='0.0.0.0', port=5000)
